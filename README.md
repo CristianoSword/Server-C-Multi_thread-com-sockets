@@ -16,7 +16,7 @@ Sistema de servidor multi-thread em C demonstrando conceitos avançados de progr
 ## 🚀 Compilação
 
 ```bash
-gcc -pthread -ldl -o servidor sistema_multithread.c
+gcc -pthread -ldl -o servidor main.c
 ```
 
 ## ▶️ Execução
