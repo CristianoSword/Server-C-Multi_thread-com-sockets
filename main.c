@@ -1,3 +1,20 @@
+/**
+ * ============================================================================
+ * Programa: Sistema Multi-thread com Socket e Pool de Threads
+ * Autor: Cristiano Camacho
+ * Data: 12/12/2025
+ * ============================================================================
+ * Descrição:
+ *   Sistema avançado de servidor multi-thread com as seguintes funcionalidades:
+ *   - Pool de threads gerenciado por semáforos
+ *   - Cache LRU (Least Recently Used)
+ *   - Sistema de logging assíncrono
+ *   - Balanceador de carga round-robin
+ *   - Carregamento dinâmico de plugins
+ *   - Otimizações com inline assembly
+ * ============================================================================
+ */
+
 // Sistema multi-thread com socket - Versão corrigida
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,7 +38,6 @@ typedef struct {
     pthread_t thread_id;
     sem_t *semaforo;
 } ConexaoCliente;
-
 
 // Declaração forward da função que faltava
 void processar_requisicao_distribuida(const char *buffer, ConexaoCliente *conexao);
@@ -54,7 +70,6 @@ void *gerenciador_conexoes(void *arg) {
     return NULL;
 }
 
-
 // 3. Cache com algoritmo LRU (Least Recently Used)
 typedef struct CacheNode {
     char *chave;
@@ -82,6 +97,7 @@ typedef struct {
     int indice_leitura;
     pthread_t thread_logger;
 } SistemaLog;
+
 // 5. Balanceador de carga
 typedef struct {
     struct sockaddr_in servidores[5];
@@ -163,6 +179,10 @@ void registrar_plugin(Plugin *plugin) {
 }
 
 int main() {
+    printf("============================================================================\n");
+    printf("Sistema Multi-thread com Socket - Cristiano Camacho - 12/12/2025\n");
+    printf("============================================================================\n\n");
+    
     printf("Sistema multi-thread compilado com sucesso!\n");
     
     // Teste de multiplicação otimizada
