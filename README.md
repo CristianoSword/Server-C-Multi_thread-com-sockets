@@ -2,7 +2,7 @@
 
 Sistema de servidor multi-thread em C demonstrando conceitos avançados de programação concorrente e comunicação em rede.
 
-## 📌 O que tem aqui
+##  O que tem aqui
 
 - **Pool de Threads** - Gerenciamento eficiente de múltiplas conexões simultâneas
 - **Semáforos** - Sincronização entre threads para evitar condições de corrida
@@ -13,26 +13,26 @@ Sistema de servidor multi-thread em C demonstrando conceitos avançados de progr
 - **Sistema de Plugins** - Carregamento dinâmico de bibliotecas (.so)
 - **Inline Assembly** - Otimizações de baixo nível
 
-## 🚀 Compilação
+##  Compilação
 
 ```bash
 gcc -pthread -ldl -o servidor main.c
 ```
 
-## ▶️ Execução
+##  Execução
 
 ```bash
 ./servidor
 ```
 
-## 🔧 Requisitos
+##  Requisitos
 
 - GCC ou Clang
 - Linux/Unix (para sockets POSIX e pthreads)
 - Biblioteca pthread
 - Biblioteca dl (dynamic linking)
 
-## 💡 Conceitos Importantes
+##  Conceitos Importantes
 
 **Concorrência** - Múltiplas threads processando requisições ao mesmo tempo
 
@@ -42,7 +42,7 @@ gcc -pthread -ldl -o servidor main.c
 
 **Dynamic Loading** - Carregamento de código em tempo de execução
 
-## 📝 Estrutura do Código
+##  Estrutura do Código
 
 ```
 ConexaoCliente    → Estrutura para cada cliente conectado
@@ -53,7 +53,7 @@ BalanceadorCarga  → Distribuição de carga entre servidores
 carregar_plugins  → Sistema de extensão via plugins
 ```
 
-## ⚠️ Nota
+##  Notas
 
 Este é um projeto educacional demonstrando técnicas avançadas de programação em C. Para uso em produção, seria necessário adicionar tratamento de erros mais robusto e testes de estresse.
 
