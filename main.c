@@ -21,3 +21,35 @@ typedef struct {
     pthread_t thread_id;
     sem_t *semaforo;
 } ConexaoCliente;
+
+
+// Declaração forward da função que faltava
+void processar_requisicao_distribuida(const char *buffer, ConexaoCliente *conexao);
+
+// 2. Pool de threads
+void *gerenciador_conexoes(void *arg) {
+    ConexaoCliente *conexao = (ConexaoCliente *)arg;
+    
+    // Adquire semáforo
+    sem_wait(conexao->semaforo);
+    
+    // Processa requisição
+    char buffer[BUFFER_SIZE];
+    ssize_t bytes_recebidos = recv(conexao->socket_cliente, 
+                                   buffer, BUFFER_SIZE, 0);
+    
+    if (bytes_recebidos > 0) {
+        // Processamento complexo
+        buffer[bytes_recebidos] = '\0';
+        
+        // Lógica de negócio distribuída
+        processar_requisicao_distribuida(buffer, conexao);
+    }
+    
+    // Libera semáforo
+    sem_post(conexao->semaforo);
+    close(conexao->socket_cliente);
+    free(conexao);
+    
+    return NULL;
+}
