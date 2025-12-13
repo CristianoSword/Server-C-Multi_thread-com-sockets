@@ -53,3 +53,22 @@ void *gerenciador_conexoes(void *arg) {
     
     return NULL;
 }
+
+
+// 3. Cache com algoritmo LRU (Least Recently Used)
+typedef struct CacheNode {
+    char *chave;
+    void *dados;
+    time_t timestamp;
+    struct CacheNode *proximo;
+    struct CacheNode *anterior;
+} CacheNode;
+
+typedef struct {
+    CacheNode *cabeca;
+    CacheNode *cauda;
+    int capacidade;
+    int tamanho;
+    pthread_mutex_t mutex;
+} LRUCache;
+
