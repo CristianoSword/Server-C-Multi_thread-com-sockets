@@ -90,3 +90,14 @@ typedef struct {
     int *health_check; // Status dos servidores
     pthread_mutex_t mutex_balanceamento;
 } BalanceadorCarga;
+
+// 6. Otimização com inline assembly (exemplo)
+int multiplicacao_otimizada(int a, int b) {
+    int resultado;
+    __asm__ (
+        "imull %%ebx, %%eax;"
+        : "=a" (resultado)
+        : "a" (a), "b" (b)
+    );
+    return resultado;
+}
