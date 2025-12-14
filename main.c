@@ -1,21 +1,21 @@
 /**
  * ============================================================================
- * Programa: Sistema Server C - Multi-thread com Socket 
- * Autor: Cristiano Camacho
- * Data: 13/12/2025
+ * Program: Server System C - Multi-thread with Socket 
+ * Author: Cristiano Camacho
+ * Date: 12/13/2025
  * ============================================================================
- * Descrição:
- *   Sistema avançado de servidor multi-thread com as seguintes funcionalidades:
- *   - Pool de threads gerenciado por semáforos
- *   - Cache LRU (Least Recently Used)
- *   - Sistema de logging assíncrono
- *   - Balanceador de carga round-robin
- *   - Carregamento dinâmico de plugins
- *   - Otimizações com inline assembly
+ * Description:
+ *   Advanced multi-thread server system with the following features:
+ *   - Thread pool managed by semaphores
+ *   - LRU (Least Recently Used) Cache
+ *   - Asynchronous logging system
+ *   - Round-robin load balancer
+ *   - Dynamic plugin loading
+ *   - Optimizations with inline assembly
  * ============================================================================
  */
 
-// Sistema multi-thread com socket - VERSAO WINDOWS NATIVA
+// Multi-thread system with socket - NATIVE WINDOWS VERSION
 #define _WIN32_WINNT 0x0600
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -32,53 +32,53 @@
 #define BUFFER_SIZE 1024
 #define CACHE_CAPACITY 100
 #define LOG_BUFFER_SIZE 1000
-#define PORTA_SERVIDOR 9090
+#define SERVER_PORT 9090
 #define MAX_PLUGINS 10
 
-// Estruturas de dados
+// Data structures
 typedef struct {
-    SOCKET socket_cliente;
-    struct sockaddr_in endereco;
+    SOCKET client_socket;
+    struct sockaddr_in address;
     HANDLE thread_handle;
-    HANDLE *semaforo;
-} ConexaoCliente;
+    HANDLE *semaphore;
+} ClientConnection;
 
 typedef struct CacheNode {
-    char *chave;
-    void *dados;
-    size_t tamanho_dados;
+    char *key;
+    void *data;
+    size_t data_size;
     time_t timestamp;
-    struct CacheNode *proximo;
-    struct CacheNode *anterior;
+    struct CacheNode *next;
+    struct CacheNode *previous;
 } CacheNode;
 
 typedef struct {
-    CacheNode *cabeca;
-    CacheNode *cauda;
-    int capacidade;
-    int tamanho;
+    CacheNode *head;
+    CacheNode *tail;
+    int capacity;
+    int size;
     CRITICAL_SECTION mutex;
 } LRUCache;
 
 typedef struct {
-    FILE *arquivo_log;
-    CRITICAL_SECTION mutex_log;
-    HANDLE cond_log;
-    char **buffer_log;
-    int indice_escrita;
-    int indice_leitura;
-    int tamanho_buffer;
-    int rodando;
-    HANDLE thread_logger;
-} SistemaLog;
+    FILE *log_file;
+    CRITICAL_SECTION log_mutex;
+    HANDLE log_cond;
+    char **log_buffer;
+    int write_index;
+    int read_index;
+    int buffer_size;
+    int running;
+    HANDLE logger_thread;
+} LogSystem;
 
 typedef struct {
-    struct sockaddr_in servidores[5];
-    int atual;
-    int servidores_ativos;
+    struct sockaddr_in servers[5];
+    int current;
+    int active_servers;
     int *health_check;
-    CRITICAL_SECTION mutex_balanceamento;
-} BalanceadorCarga;
+    CRITICAL_SECTION balancing_mutex;
+} LoadBalancer;
 
 typedef void (*PluginInitFunc)(void*);
 typedef void (*PluginProcessFunc)(const char*, void*);
@@ -87,424 +87,424 @@ typedef struct {
     HMODULE handle;
     PluginInitFunc init;
     PluginProcessFunc process;
-    char nome[50];
+    char name[50];
 } Plugin;
 
 typedef struct {
     Plugin plugins[MAX_PLUGINS];
     int total_plugins;
     CRITICAL_SECTION mutex;
-} SistemaPlugins;
+} PluginSystem;
 
-// Variaveis globais
-LRUCache *cache_global = NULL;
-SistemaLog *log_global = NULL;
-BalanceadorCarga *balanceador_global = NULL;
-SistemaPlugins *sistema_plugins_global = NULL;
-HANDLE semaforo_pool;
-volatile int servidor_rodando = 1;
+// Global variables
+LRUCache *global_cache = NULL;
+LogSystem *global_log = NULL;
+LoadBalancer *global_balancer = NULL;
+PluginSystem *global_plugin_system = NULL;
+HANDLE pool_semaphore;
+volatile int server_running = 1;
 
 // Forward declarations
-void escrever_log(SistemaLog *log, const char *formato, ...);
+void write_log(LogSystem *log, const char *format, ...);
 
-// CACHE LRU
-LRUCache* criar_cache(int capacidade) {
+// LRU CACHE
+LRUCache* create_cache(int capacity) {
     LRUCache *cache = (LRUCache*)malloc(sizeof(LRUCache));
-    cache->cabeca = NULL;
-    cache->cauda = NULL;
-    cache->capacidade = capacidade;
-    cache->tamanho = 0;
+    cache->head = NULL;
+    cache->tail = NULL;
+    cache->capacity = capacity;
+    cache->size = 0;
     InitializeCriticalSection(&cache->mutex);
     return cache;
 }
 
-void remover_node_cache(LRUCache *cache, CacheNode *node) {
-    if (node->anterior) {
-        node->anterior->proximo = node->proximo;
+void remove_cache_node(LRUCache *cache, CacheNode *node) {
+    if (node->previous) {
+        node->previous->next = node->next;
     } else {
-        cache->cabeca = node->proximo;
+        cache->head = node->next;
     }
-    if (node->proximo) {
-        node->proximo->anterior = node->anterior;
+    if (node->next) {
+        node->next->previous = node->previous;
     } else {
-        cache->cauda = node->anterior;
+        cache->tail = node->previous;
     }
 }
 
-void adicionar_no_topo(LRUCache *cache, CacheNode *node) {
-    node->proximo = cache->cabeca;
-    node->anterior = NULL;
-    if (cache->cabeca) {
-        cache->cabeca->anterior = node;
+void add_to_top(LRUCache *cache, CacheNode *node) {
+    node->next = cache->head;
+    node->previous = NULL;
+    if (cache->head) {
+        cache->head->previous = node;
     }
-    cache->cabeca = node;
-    if (!cache->cauda) {
-        cache->cauda = node;
+    cache->head = node;
+    if (!cache->tail) {
+        cache->tail = node;
     }
 }
 
-void* cache_get(LRUCache *cache, const char *chave) {
+void* cache_get(LRUCache *cache, const char *key) {
     EnterCriticalSection(&cache->mutex);
-    CacheNode *atual = cache->cabeca;
-    while (atual) {
-        if (strcmp(atual->chave, chave) == 0) {
-            remover_node_cache(cache, atual);
-            adicionar_no_topo(cache, atual);
-            atual->timestamp = time(NULL);
-            void *dados = atual->dados;
+    CacheNode *current = cache->head;
+    while (current) {
+        if (strcmp(current->key, key) == 0) {
+            remove_cache_node(cache, current);
+            add_to_top(cache, current);
+            current->timestamp = time(NULL);
+            void *data = current->data;
             LeaveCriticalSection(&cache->mutex);
-            return dados;
+            return data;
         }
-        atual = atual->proximo;
+        current = current->next;
     }
     LeaveCriticalSection(&cache->mutex);
     return NULL;
 }
 
-void cache_put(LRUCache *cache, const char *chave, void *dados, size_t tamanho) {
+void cache_put(LRUCache *cache, const char *key, void *data, size_t size) {
     EnterCriticalSection(&cache->mutex);
-    CacheNode *atual = cache->cabeca;
-    while (atual) {
-        if (strcmp(atual->chave, chave) == 0) {
-            free(atual->dados);
-            atual->dados = malloc(tamanho);
-            memcpy(atual->dados, dados, tamanho);
-            atual->tamanho_dados = tamanho;
-            atual->timestamp = time(NULL);
-            remover_node_cache(cache, atual);
-            adicionar_no_topo(cache, atual);
+    CacheNode *current = cache->head;
+    while (current) {
+        if (strcmp(current->key, key) == 0) {
+            free(current->data);
+            current->data = malloc(size);
+            memcpy(current->data, data, size);
+            current->data_size = size;
+            current->timestamp = time(NULL);
+            remove_cache_node(cache, current);
+            add_to_top(cache, current);
             LeaveCriticalSection(&cache->mutex);
             return;
         }
-        atual = atual->proximo;
+        current = current->next;
     }
-    CacheNode *novo = (CacheNode*)malloc(sizeof(CacheNode));
-    novo->chave = _strdup(chave);
-    novo->dados = malloc(tamanho);
-    memcpy(novo->dados, dados, tamanho);
-    novo->tamanho_dados = tamanho;
-    novo->timestamp = time(NULL);
-    adicionar_no_topo(cache, novo);
-    cache->tamanho++;
-    if (cache->tamanho > cache->capacidade) {
-        CacheNode *remover = cache->cauda;
-        remover_node_cache(cache, remover);
-        free(remover->chave);
-        free(remover->dados);
-        free(remover);
-        cache->tamanho--;
+    CacheNode *new_node = (CacheNode*)malloc(sizeof(CacheNode));
+    new_node->key = _strdup(key);
+    new_node->data = malloc(size);
+    memcpy(new_node->data, data, size);
+    new_node->data_size = size;
+    new_node->timestamp = time(NULL);
+    add_to_top(cache, new_node);
+    cache->size++;
+    if (cache->size > cache->capacity) {
+        CacheNode *remove = cache->tail;
+        remove_cache_node(cache, remove);
+        free(remove->key);
+        free(remove->data);
+        free(remove);
+        cache->size--;
     }
     LeaveCriticalSection(&cache->mutex);
 }
 
-void destruir_cache(LRUCache *cache) {
+void destroy_cache(LRUCache *cache) {
     EnterCriticalSection(&cache->mutex);
-    CacheNode *atual = cache->cabeca;
-    while (atual) {
-        CacheNode *proximo = atual->proximo;
-        free(atual->chave);
-        free(atual->dados);
-        free(atual);
-        atual = proximo;
+    CacheNode *current = cache->head;
+    while (current) {
+        CacheNode *next = current->next;
+        free(current->key);
+        free(current->data);
+        free(current);
+        current = next;
     }
     LeaveCriticalSection(&cache->mutex);
     DeleteCriticalSection(&cache->mutex);
     free(cache);
 }
 
-// SISTEMA DE LOGGING
-DWORD WINAPI thread_logger_func(LPVOID arg) {
-    SistemaLog *log = (SistemaLog*)arg;
-    while (log->rodando || log->indice_leitura != log->indice_escrita) {
-        EnterCriticalSection(&log->mutex_log);
-        while (log->indice_leitura == log->indice_escrita && log->rodando) {
-            LeaveCriticalSection(&log->mutex_log);
-            WaitForSingleObject(log->cond_log, 100);
-            EnterCriticalSection(&log->mutex_log);
+// LOGGING SYSTEM
+DWORD WINAPI logger_thread_func(LPVOID arg) {
+    LogSystem *log = (LogSystem*)arg;
+    while (log->running || log->read_index != log->write_index) {
+        EnterCriticalSection(&log->log_mutex);
+        while (log->read_index == log->write_index && log->running) {
+            LeaveCriticalSection(&log->log_mutex);
+            WaitForSingleObject(log->log_cond, 100);
+            EnterCriticalSection(&log->log_mutex);
         }
-        while (log->indice_leitura != log->indice_escrita) {
-            char *mensagem = log->buffer_log[log->indice_leitura];
-            if (mensagem) {
-                fprintf(log->arquivo_log, "%s", mensagem);
-                fflush(log->arquivo_log);
-                free(mensagem);
-                log->buffer_log[log->indice_leitura] = NULL;
+        while (log->read_index != log->write_index) {
+            char *message = log->log_buffer[log->read_index];
+            if (message) {
+                fprintf(log->log_file, "%s", message);
+                fflush(log->log_file);
+                free(message);
+                log->log_buffer[log->read_index] = NULL;
             }
-            log->indice_leitura = (log->indice_leitura + 1) % log->tamanho_buffer;
+            log->read_index = (log->read_index + 1) % log->buffer_size;
         }
-        LeaveCriticalSection(&log->mutex_log);
+        LeaveCriticalSection(&log->log_mutex);
     }
     return 0;
 }
 
-SistemaLog* criar_sistema_log(const char *arquivo) {
-    SistemaLog *log = (SistemaLog*)malloc(sizeof(SistemaLog));
-    log->arquivo_log = fopen(arquivo, "a");
-    if (!log->arquivo_log) {
-        perror("Erro ao abrir arquivo de log");
+LogSystem* create_log_system(const char *file) {
+    LogSystem *log = (LogSystem*)malloc(sizeof(LogSystem));
+    log->log_file = fopen(file, "a");
+    if (!log->log_file) {
+        perror("Error opening log file");
         free(log);
         return NULL;
     }
-    InitializeCriticalSection(&log->mutex_log);
-    log->cond_log = CreateEvent(NULL, FALSE, FALSE, NULL);
-    log->tamanho_buffer = LOG_BUFFER_SIZE;
-    log->buffer_log = (char**)calloc(log->tamanho_buffer, sizeof(char*));
-    log->indice_escrita = 0;
-    log->indice_leitura = 0;
-    log->rodando = 1;
-    log->thread_logger = CreateThread(NULL, 0, thread_logger_func, log, 0, NULL);
+    InitializeCriticalSection(&log->log_mutex);
+    log->log_cond = CreateEvent(NULL, FALSE, FALSE, NULL);
+    log->buffer_size = LOG_BUFFER_SIZE;
+    log->log_buffer = (char**)calloc(log->buffer_size, sizeof(char*));
+    log->write_index = 0;
+    log->read_index = 0;
+    log->running = 1;
+    log->logger_thread = CreateThread(NULL, 0, logger_thread_func, log, 0, NULL);
     return log;
 }
 
-void escrever_log(SistemaLog *log, const char *formato, ...) {
+void write_log(LogSystem *log, const char *format, ...) {
     char buffer[1024];
     char temp[900];
-    time_t agora = time(NULL);
+    time_t now = time(NULL);
     struct tm tm_info;
-    localtime_s(&tm_info, &agora);
+    localtime_s(&tm_info, &now);
     char timestamp[64];
     strftime(timestamp, sizeof(timestamp), "[%Y-%m-%d %H:%M:%S]", &tm_info);
     va_list args;
-    va_start(args, formato);
-    vsnprintf(temp, sizeof(temp), formato, args);
+    va_start(args, format);
+    vsnprintf(temp, sizeof(temp), format, args);
     va_end(args);
     snprintf(buffer, sizeof(buffer), "%s %s\n", timestamp, temp);
-    EnterCriticalSection(&log->mutex_log);
-    int proximo = (log->indice_escrita + 1) % log->tamanho_buffer;
-    if (proximo != log->indice_leitura) {
-        log->buffer_log[log->indice_escrita] = _strdup(buffer);
-        log->indice_escrita = proximo;
-        SetEvent(log->cond_log);
+    EnterCriticalSection(&log->log_mutex);
+    int next = (log->write_index + 1) % log->buffer_size;
+    if (next != log->read_index) {
+        log->log_buffer[log->write_index] = _strdup(buffer);
+        log->write_index = next;
+        SetEvent(log->log_cond);
     }
-    LeaveCriticalSection(&log->mutex_log);
+    LeaveCriticalSection(&log->log_mutex);
 }
 
-void destruir_sistema_log(SistemaLog *log) {
-    log->rodando = 0;
-    SetEvent(log->cond_log);
-    WaitForSingleObject(log->thread_logger, INFINITE);
-    CloseHandle(log->thread_logger);
-    fclose(log->arquivo_log);
-    for (int i = 0; i < log->tamanho_buffer; i++) {
-        if (log->buffer_log[i]) {
-            free(log->buffer_log[i]);
+void destroy_log_system(LogSystem *log) {
+    log->running = 0;
+    SetEvent(log->log_cond);
+    WaitForSingleObject(log->logger_thread, INFINITE);
+    CloseHandle(log->logger_thread);
+    fclose(log->log_file);
+    for (int i = 0; i < log->buffer_size; i++) {
+        if (log->log_buffer[i]) {
+            free(log->log_buffer[i]);
         }
     }
-    free(log->buffer_log);
-    CloseHandle(log->cond_log);
-    DeleteCriticalSection(&log->mutex_log);
+    free(log->log_buffer);
+    CloseHandle(log->log_cond);
+    DeleteCriticalSection(&log->log_mutex);
     free(log);
 }
 
-// BALANCEADOR DE CARGA
-BalanceadorCarga* criar_balanceador() {
-    BalanceadorCarga *bal = (BalanceadorCarga*)malloc(sizeof(BalanceadorCarga));
-    bal->atual = 0;
-    bal->servidores_ativos = 0;
+// LOAD BALANCER
+LoadBalancer* create_balancer() {
+    LoadBalancer *bal = (LoadBalancer*)malloc(sizeof(LoadBalancer));
+    bal->current = 0;
+    bal->active_servers = 0;
     bal->health_check = (int*)calloc(5, sizeof(int));
-    InitializeCriticalSection(&bal->mutex_balanceamento);
+    InitializeCriticalSection(&bal->balancing_mutex);
     return bal;
 }
 
-void adicionar_servidor(BalanceadorCarga *bal, const char *ip, int porta) {
-    EnterCriticalSection(&bal->mutex_balanceamento);
-    if (bal->servidores_ativos < 5) {
-        int idx = bal->servidores_ativos;
-        bal->servidores[idx].sin_family = AF_INET;
-        bal->servidores[idx].sin_port = htons(porta);
-        inet_pton(AF_INET, ip, &bal->servidores[idx].sin_addr);
+void add_server(LoadBalancer *bal, const char *ip, int port) {
+    EnterCriticalSection(&bal->balancing_mutex);
+    if (bal->active_servers < 5) {
+        int idx = bal->active_servers;
+        bal->servers[idx].sin_family = AF_INET;
+        bal->servers[idx].sin_port = htons(port);
+        inet_pton(AF_INET, ip, &bal->servers[idx].sin_addr);
         bal->health_check[idx] = 1;
-        bal->servidores_ativos++;
+        bal->active_servers++;
     }
-    LeaveCriticalSection(&bal->mutex_balanceamento);
+    LeaveCriticalSection(&bal->balancing_mutex);
 }
 
-void destruir_balanceador(BalanceadorCarga *bal) {
+void destroy_balancer(LoadBalancer *bal) {
     free(bal->health_check);
-    DeleteCriticalSection(&bal->mutex_balanceamento);
+    DeleteCriticalSection(&bal->balancing_mutex);
     free(bal);
 }
 
-// SISTEMA DE PLUGINS
-SistemaPlugins* criar_sistema_plugins() {
-    SistemaPlugins *sp = (SistemaPlugins*)malloc(sizeof(SistemaPlugins));
-    sp->total_plugins = 0;
-    InitializeCriticalSection(&sp->mutex);
-    return sp;
+// PLUGIN SYSTEM
+PluginSystem* create_plugin_system() {
+    PluginSystem *ps = (PluginSystem*)malloc(sizeof(PluginSystem));
+    ps->total_plugins = 0;
+    InitializeCriticalSection(&ps->mutex);
+    return ps;
 }
 
-void registrar_plugin(Plugin *plugin) {
-    EnterCriticalSection(&sistema_plugins_global->mutex);
-    if (sistema_plugins_global->total_plugins < MAX_PLUGINS) {
-        sistema_plugins_global->plugins[sistema_plugins_global->total_plugins] = *plugin;
-        sistema_plugins_global->total_plugins++;
-        escrever_log(log_global, "Plugin registrado: %s", plugin->nome);
+void register_plugin(Plugin *plugin) {
+    EnterCriticalSection(&global_plugin_system->mutex);
+    if (global_plugin_system->total_plugins < MAX_PLUGINS) {
+        global_plugin_system->plugins[global_plugin_system->total_plugins] = *plugin;
+        global_plugin_system->total_plugins++;
+        write_log(global_log, "Plugin registered: %s", plugin->name);
     }
-    LeaveCriticalSection(&sistema_plugins_global->mutex);
+    LeaveCriticalSection(&global_plugin_system->mutex);
 }
 
-void carregar_plugins(const char *diretorio) {
+void load_plugins(const char *directory) {
     WIN32_FIND_DATAA findData;
     char searchPath[512];
-    snprintf(searchPath, sizeof(searchPath), "%s\\*.dll", diretorio);
+    snprintf(searchPath, sizeof(searchPath), "%s\\*.dll", directory);
     HANDLE hFind = FindFirstFileA(searchPath, &findData);
     if (hFind == INVALID_HANDLE_VALUE) {
-        escrever_log(log_global, "Diretorio de plugins nao encontrado: %s", diretorio);
+        write_log(global_log, "Plugin directory not found: %s", directory);
         return;
     }
     do {
         if (!(findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-            char caminho[512];
-            snprintf(caminho, sizeof(caminho), "%s\\%s", diretorio, findData.cFileName);
-            HMODULE handle = LoadLibraryA(caminho);
+            char path[512];
+            snprintf(path, sizeof(path), "%s\\%s", directory, findData.cFileName);
+            HMODULE handle = LoadLibraryA(path);
             if (handle) {
                 Plugin plugin;
                 plugin.handle = handle;
                 plugin.init = (PluginInitFunc)GetProcAddress(handle, "plugin_init");
                 plugin.process = (PluginProcessFunc)GetProcAddress(handle, "plugin_process");
-                strncpy_s(plugin.nome, sizeof(plugin.nome), findData.cFileName, _TRUNCATE);
+                strncpy_s(plugin.name, sizeof(plugin.name), findData.cFileName, _TRUNCATE);
                 if (plugin.init && plugin.process) {
                     plugin.init(NULL);
-                    registrar_plugin(&plugin);
+                    register_plugin(&plugin);
                 } else {
                     FreeLibrary(handle);
                 }
             } else {
-                escrever_log(log_global, "Erro ao carregar %s", caminho);
+                write_log(global_log, "Error loading %s", path);
             }
         }
     } while (FindNextFileA(hFind, &findData));
     FindClose(hFind);
 }
 
-void executar_plugins(const char *dados) {
-    if (!sistema_plugins_global) return;
-    EnterCriticalSection(&sistema_plugins_global->mutex);
-    for (int i = 0; i < sistema_plugins_global->total_plugins; i++) {
-        Plugin *p = &sistema_plugins_global->plugins[i];
+void execute_plugins(const char *data) {
+    if (!global_plugin_system) return;
+    EnterCriticalSection(&global_plugin_system->mutex);
+    for (int i = 0; i < global_plugin_system->total_plugins; i++) {
+        Plugin *p = &global_plugin_system->plugins[i];
         if (p->process) {
-            p->process(dados, NULL);
+            p->process(data, NULL);
         }
     }
-    LeaveCriticalSection(&sistema_plugins_global->mutex);
+    LeaveCriticalSection(&global_plugin_system->mutex);
 }
 
-// MULTIPLICACAO OTIMIZADA
-int multiplicacao_otimizada(int a, int b) {
+// OPTIMIZED MULTIPLICATION
+int optimized_multiplication(int a, int b) {
     return a * b;
 }
 
-// PROCESSAMENTO DE REQUISICOES
-void processar_requisicao_distribuida(const char *buffer, ConexaoCliente *conexao) {
+// REQUEST PROCESSING
+void process_distributed_request(const char *buffer, ClientConnection *connection) {
     char ip_str[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &(conexao->endereco.sin_addr), ip_str, INET_ADDRSTRLEN);
-    escrever_log(log_global, "Processando requisicao de %s:%d", ip_str, ntohs(conexao->endereco.sin_port));
-    void *dados_cache = cache_get(cache_global, buffer);
-    char resposta[BUFFER_SIZE];
-    if (dados_cache) {
-        snprintf(resposta, sizeof(resposta), 
+    inet_ntop(AF_INET, &(connection->address.sin_addr), ip_str, INET_ADDRSTRLEN);
+    write_log(global_log, "Processing request from %s:%d", ip_str, ntohs(connection->address.sin_port));
+    void *cache_data = cache_get(global_cache, buffer);
+    char response[BUFFER_SIZE];
+    if (cache_data) {
+        snprintf(response, sizeof(response), 
                 "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n"
-                "Resposta do CACHE: %s\n", (char*)dados_cache);
-        escrever_log(log_global, "Cache HIT: %s", buffer);
+                "Response from CACHE: %s\n", (char*)cache_data);
+        write_log(global_log, "Cache HIT: %s", buffer);
     } else {
-        snprintf(resposta, sizeof(resposta),
+        snprintf(response, sizeof(response),
                 "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n"
-                "Processado: %s\nMultiplicacao 7x8 = %d\n",
-                buffer, multiplicacao_otimizada(7, 8));
-        cache_put(cache_global, buffer, resposta, strlen(resposta) + 1);
-        escrever_log(log_global, "Cache MISS: %s", buffer);
+                "Processed: %s\nMultiplication 7x8 = %d\n",
+                buffer, optimized_multiplication(7, 8));
+        cache_put(global_cache, buffer, response, strlen(response) + 1);
+        write_log(global_log, "Cache MISS: %s", buffer);
     }
-    if (sistema_plugins_global && sistema_plugins_global->total_plugins > 0) {
-        executar_plugins(buffer);
+    if (global_plugin_system && global_plugin_system->total_plugins > 0) {
+        execute_plugins(buffer);
     }
-    send(conexao->socket_cliente, resposta, (int)strlen(resposta), 0);
+    send(connection->client_socket, response, (int)strlen(response), 0);
 }
 
-// POOL DE THREADS
-DWORD WINAPI gerenciador_conexoes(LPVOID arg) {
-    ConexaoCliente *conexao = (ConexaoCliente*)arg;
-    WaitForSingleObject(*conexao->semaforo, INFINITE);
+// THREAD POOL
+DWORD WINAPI connection_manager(LPVOID arg) {
+    ClientConnection *connection = (ClientConnection*)arg;
+    WaitForSingleObject(*connection->semaphore, INFINITE);
     char buffer[BUFFER_SIZE];
-    int bytes_recebidos = recv(conexao->socket_cliente, buffer, BUFFER_SIZE - 1, 0);
-    if (bytes_recebidos > 0) {
-        buffer[bytes_recebidos] = '\0';
-        processar_requisicao_distribuida(buffer, conexao);
-    } else if (bytes_recebidos == 0) {
-        escrever_log(log_global, "Cliente desconectou");
+    int bytes_received = recv(connection->client_socket, buffer, BUFFER_SIZE - 1, 0);
+    if (bytes_received > 0) {
+        buffer[bytes_received] = '\0';
+        process_distributed_request(buffer, connection);
+    } else if (bytes_received == 0) {
+        write_log(global_log, "Client disconnected");
     } else {
-        escrever_log(log_global, "Erro ao receber dados");
+        write_log(global_log, "Error receiving data");
     }
-    ReleaseSemaphore(*conexao->semaforo, 1, NULL);
-    closesocket(conexao->socket_cliente);
-    free(conexao);
+    ReleaseSemaphore(*connection->semaphore, 1, NULL);
+    closesocket(connection->client_socket);
+    free(connection);
     return 0;
 }
 
-// SERVIDOR SOCKET
-DWORD WINAPI servidor_socket(LPVOID arg) {
+// SOCKET SERVER
+DWORD WINAPI socket_server(LPVOID arg) {
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-        printf("WSAStartup falhou\n");
+        printf("WSAStartup failed\n");
         return 1;
     }
     
-    SOCKET socket_servidor = socket(AF_INET, SOCK_STREAM, 0);
-    if (socket_servidor == INVALID_SOCKET) {
-        printf("Erro ao criar socket: %d\n", WSAGetLastError());
+    SOCKET server_socket = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_socket == INVALID_SOCKET) {
+        printf("Error creating socket: %d\n", WSAGetLastError());
         WSACleanup();
         return 1;
     }
     
-    // Permite reusar a porta
+    // Allow port reuse
     int opt = 1;
-    setsockopt(socket_servidor, SOL_SOCKET, SO_REUSEADDR, (char*)&opt, sizeof(opt));
+    setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, (char*)&opt, sizeof(opt));
     
-    struct sockaddr_in endereco_servidor;
-    endereco_servidor.sin_family = AF_INET;
-    endereco_servidor.sin_addr.s_addr = INADDR_ANY;
-    endereco_servidor.sin_port = htons(PORTA_SERVIDOR);
+    struct sockaddr_in server_address;
+    server_address.sin_family = AF_INET;
+    server_address.sin_addr.s_addr = INADDR_ANY;
+    server_address.sin_port = htons(SERVER_PORT);
     
-    if (bind(socket_servidor, (struct sockaddr*)&endereco_servidor, sizeof(endereco_servidor)) == SOCKET_ERROR) {
-        printf("Erro no bind (porta %d pode estar em uso): %d\n", PORTA_SERVIDOR, WSAGetLastError());
-        printf("Tente fechar outros programas usando a porta ou mude PORTA_SERVIDOR\n");
-        closesocket(socket_servidor);
+    if (bind(server_socket, (struct sockaddr*)&server_address, sizeof(server_address)) == SOCKET_ERROR) {
+        printf("Bind error (port %d may be in use): %d\n", SERVER_PORT, WSAGetLastError());
+        printf("Try closing other programs using the port or change SERVER_PORT\n");
+        closesocket(server_socket);
         WSACleanup();
         return 1;
     }
     
-    if (listen(socket_servidor, 10) == SOCKET_ERROR) {
-        printf("Erro no listen: %d\n", WSAGetLastError());
-        closesocket(socket_servidor);
+    if (listen(server_socket, 10) == SOCKET_ERROR) {
+        printf("Listen error: %d\n", WSAGetLastError());
+        closesocket(server_socket);
         WSACleanup();
         return 1;
     }
     
-    escrever_log(log_global, "Servidor rodando na porta %d", PORTA_SERVIDOR);
-    printf("Servidor rodando na porta %d\n", PORTA_SERVIDOR);
-    printf("Teste com: curl http://localhost:%d\n", PORTA_SERVIDOR);
+    write_log(global_log, "Server running on port %d", SERVER_PORT);
+    printf("Server running on port %d\n", SERVER_PORT);
+    printf("Test with: curl http://localhost:%d\n", SERVER_PORT);
     
-    while (servidor_rodando) {
-        struct sockaddr_in endereco_cliente;
-        int tamanho_endereco = sizeof(endereco_cliente);
+    while (server_running) {
+        struct sockaddr_in client_address;
+        int address_size = sizeof(client_address);
         
-        SOCKET socket_cliente = accept(socket_servidor, (struct sockaddr*)&endereco_cliente, &tamanho_endereco);
+        SOCKET client_socket = accept(server_socket, (struct sockaddr*)&client_address, &address_size);
         
-        if (socket_cliente == INVALID_SOCKET) {
-            if (servidor_rodando) {
-                escrever_log(log_global, "Erro no accept: %d", WSAGetLastError());
+        if (client_socket == INVALID_SOCKET) {
+            if (server_running) {
+                write_log(global_log, "Accept error: %d", WSAGetLastError());
             }
             continue;
         }
         
-        ConexaoCliente *conexao = (ConexaoCliente*)malloc(sizeof(ConexaoCliente));
-        conexao->socket_cliente = socket_cliente;
-        conexao->endereco = endereco_cliente;
-        conexao->semaforo = &semaforo_pool;
-        conexao->thread_handle = CreateThread(NULL, 0, gerenciador_conexoes, conexao, 0, NULL);
-        CloseHandle(conexao->thread_handle);
+        ClientConnection *connection = (ClientConnection*)malloc(sizeof(ClientConnection));
+        connection->client_socket = client_socket;
+        connection->address = client_address;
+        connection->semaphore = &pool_semaphore;
+        connection->thread_handle = CreateThread(NULL, 0, connection_manager, connection, 0, NULL);
+        CloseHandle(connection->thread_handle);
     }
     
-    closesocket(socket_servidor);
+    closesocket(server_socket);
     WSACleanup();
     return 0;
 }
@@ -512,8 +512,8 @@ DWORD WINAPI servidor_socket(LPVOID arg) {
 // SIGNAL HANDLER
 BOOL WINAPI ConsoleHandler(DWORD signal) {
     if (signal == CTRL_C_EVENT) {
-        printf("\n\nEncerrando servidor...\n");
-        servidor_rodando = 0;
+        printf("\n\nShutting down server...\n");
+        server_running = 0;
         return TRUE;
     }
     return FALSE;
@@ -522,45 +522,45 @@ BOOL WINAPI ConsoleHandler(DWORD signal) {
 // MAIN
 int main() {
     printf("==============================================\n");
-    printf("  SISTEMA MULTI-THREAD COMPLETO - WINDOWS\n");
+    printf("  COMPLETE MULTI-THREAD SYSTEM - WINDOWS\n");
     printf("==============================================\n\n");
     
     SetConsoleCtrlHandler(ConsoleHandler, TRUE);
-    semaforo_pool = CreateSemaphore(NULL, MAX_THREADS, MAX_THREADS, NULL);
-    log_global = criar_sistema_log("servidor.log");
-    if (!log_global) {
-        fprintf(stderr, "Falha ao inicializar sistema de log\n");
+    pool_semaphore = CreateSemaphore(NULL, MAX_THREADS, MAX_THREADS, NULL);
+    global_log = create_log_system("server.log");
+    if (!global_log) {
+        fprintf(stderr, "Failed to initialize log system\n");
         return 1;
     }
     Sleep(500);
-    escrever_log(log_global, "Sistema iniciado");
-    cache_global = criar_cache(CACHE_CAPACITY);
-    escrever_log(log_global, "Cache LRU criado com capacidade %d", CACHE_CAPACITY);
-    balanceador_global = criar_balanceador();
-    adicionar_servidor(balanceador_global, "127.0.0.1", 8081);
-    adicionar_servidor(balanceador_global, "127.0.0.1", 8082);
-    escrever_log(log_global, "Balanceador de carga configurado");
-    sistema_plugins_global = criar_sistema_plugins();
-    carregar_plugins("./plugins");
-    escrever_log(log_global, "Sistema de plugins inicializado");
-    int teste_mult = multiplicacao_otimizada(12, 15);
-    printf("Teste multiplicacao otimizada: 12 x 15 = %d\n", teste_mult);
-    escrever_log(log_global, "Multiplicacao otimizada: 12 x 15 = %d", teste_mult);
-    char dado_teste[] = "Hello Cache!";
-    cache_put(cache_global, "teste1", dado_teste, strlen(dado_teste) + 1);
-    char *recuperado = (char*)cache_get(cache_global, "teste1");
-    printf("Teste cache: %s\n", recuperado ? recuperado : "FALHOU");
+    write_log(global_log, "System started");
+    global_cache = create_cache(CACHE_CAPACITY);
+    write_log(global_log, "LRU Cache created with capacity %d", CACHE_CAPACITY);
+    global_balancer = create_balancer();
+    add_server(global_balancer, "127.0.0.1", 8081);
+    add_server(global_balancer, "127.0.0.1", 8082);
+    write_log(global_log, "Load balancer configured");
+    global_plugin_system = create_plugin_system();
+    load_plugins("./plugins");
+    write_log(global_log, "Plugin system initialized");
+    int test_mult = optimized_multiplication(12, 15);
+    printf("Optimized multiplication test: 12 x 15 = %d\n", test_mult);
+    write_log(global_log, "Optimized multiplication: 12 x 15 = %d", test_mult);
+    char test_data[] = "Hello Cache!";
+    cache_put(global_cache, "test1", test_data, strlen(test_data) + 1);
+    char *retrieved = (char*)cache_get(global_cache, "test1");
+    printf("Cache test: %s\n", retrieved ? retrieved : "FAILED");
     printf("\n==============================================\n");
-    printf("Todos os sistemas inicializados!\n");
+    printf("All systems initialized!\n");
     printf("==============================================\n\n");
-    HANDLE thread_servidor = CreateThread(NULL, 0, servidor_socket, NULL, 0, NULL);
-    WaitForSingleObject(thread_servidor, INFINITE);
-    CloseHandle(thread_servidor);
-    printf("\nLimpando recursos...\n");
-    destruir_cache(cache_global);
-    destruir_balanceador(balanceador_global);
-    destruir_sistema_log(log_global);
-    CloseHandle(semaforo_pool);
-    printf("Sistema encerrado com sucesso!\n");
+    HANDLE server_thread = CreateThread(NULL, 0, socket_server, NULL, 0, NULL);
+    WaitForSingleObject(server_thread, INFINITE);
+    CloseHandle(server_thread);
+    printf("\nCleaning up resources...\n");
+    destroy_cache(global_cache);
+    destroy_balancer(global_balancer);
+    destroy_log_system(global_log);
+    CloseHandle(pool_semaphore);
+    printf("System shut down successfully!\n");
     return 0;
 }
